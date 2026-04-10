@@ -1,0 +1,17 @@
+FROM python:3.12-slim
+
+# 安装必要依赖
+RUN apt-get update && apt-get install -y gcc libpq-dev && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 安装 pip 依赖 (包含 scrapling[all])
+COPY requirements.txt /app/
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 下载爬虫所需的无头浏览器（Camoufox/Playwright）及其底层系统依赖
+RUN playwright install chromium firefox --with-deps || true
+RUN python -m camoufox fetch || true
+
+# 为了方便在 docker 里直接能访问到包，设置 PYTHONPATH
+ENV PYTHONPATH=/app

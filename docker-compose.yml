@@ -1,0 +1,128 @@
+services:
+  # ==========================================
+  # 1. 业务存储核心 - ClickHouse
+  # ==========================================
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    restart: always
+    environment:
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./sql/init_clickhouse.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql:ro
+      - ./sql/async_insert.xml:/etc/clickhouse-server/users.d/async_insert.xml:ro
+    networks:
+      - crawler-net-dev
+
+  # ==========================================
+  # 2a. Prefect 持久化 - PostgreSQL
+  # ==========================================
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: prefect
+      POSTGRES_PASSWORD: prefect
+      POSTGRES_DB: prefect
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prefect"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - crawler-net-dev
+
+  # ==========================================
+  # 2b. 调度控制大脑 - Prefect Server
+  # ==========================================
+  prefect-server:
+    image: prefecthq/prefect:3-latest
+    restart: always
+    command: prefect server start --host 0.0.0.0
+    environment:
+      PREFECT_SERVER_TELEMETRY_ENABLED: "false"
+      PREFECT_API_DATABASE_CONNECTION_URL: "postgresql+asyncpg://prefect:prefect@postgres:5432/prefect"
+    ports:
+      - "4200:4200"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:4200/api/health').raise_for_status()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - crawler-net-dev
+
+  # ==========================================
+  # 3. 爬虫执行节点 (Worker) 
+  # ==========================================
+  crawler-worker:
+    build:
+      context: .
+      dockerfile: ./deployments/dockerfile
+    restart: always
+    command: >
+      bash -c "
+      prefect work-pool create --type process docker-crawler-pool || true;
+      prefect worker start --pool 'docker-crawler-pool' --type process
+      "
+    environment:
+      PREFECT_API_URL: http://prefect-server:4200/api
+      CLICKHOUSE_HOST: clickhouse
+      ENABLE_KAFKA: "false"
+    volumes:
+      - ./:/app
+    depends_on:
+      prefect-server:
+        condition: service_healthy
+      clickhouse:
+        condition: service_started
+    networks:
+      - crawler-net-dev
+
+  # ==========================================
+  # 4. 专属的轻量级原生中文大屏 (取代 Crawlab，0 重型数据库负担)
+  # ==========================================
+  custom-dashboard:
+    build:
+      context: ./dashboard   # 【非常关键】这里将上下文限定在 dashboard 目录
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "8280:8080"
+    environment:
+      PREFECT_API_URL: "http://prefect-server:4200/api"
+      RUNTIME_FLAGS_PATH: "/app/runtime/system_flags.json"
+      PROJECT_ROOT: "/workspace"
+      LOCAL_CODEX_HELPER_URL: "http://host.docker.internal:8789"
+      AI_BASE_URL: "${AI_BASE_URL:-https://api.openai.com/v1}"
+      AI_API_KEY: "${AI_API_KEY:-}"
+      AI_MODEL: "${AI_MODEL:-}"
+      DEPLOYMENT_MANAGER_NAME: "platform-register-deployment"
+    volumes:
+      - ./runtime:/app/runtime
+      - ./:/workspace
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - prefect-server
+    networks:
+      - crawler-net-dev
+
+networks:
+  crawler-net-dev:
+    driver: bridge
+
+volumes:
+  clickhouse_data:
+  postgres_data:

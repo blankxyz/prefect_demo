@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>深度爬虫调度矩阵 | Deep Crawler Matrix</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #f3f4f6;
+            --glass-bg: rgba(255, 255, 255, 0.82);
+            --glass-border: rgba(148, 163, 184, 0.22);
+            --text-main: #111827;
+            --text-muted: #6b7280;
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --success: #059669;
+            --danger: #dc2626;
+            --running: #2563eb;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Inter', -apple-system, sans-serif;
+            margin: 0;
+            padding: 40px;
+            background-image: radial-gradient(circle at top right, rgba(148, 163, 184, 0.14), transparent 420px),
+                              radial-gradient(circle at bottom left, rgba(226, 232, 240, 0.85), transparent 420px);
+            min-height: 100vh;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 40px;
+        }
+        .header h1 {
+            font-size: 2.5rem;
+            margin: 0;
+            background: linear-gradient(135deg, #334155 0%, #2563eb 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 800;
+        }
+        
+        .status-badge {
+            padding: 8px 16px;
+            border-radius: 20px;
+            background: rgba(5, 150, 105, 0.12);
+            color: var(--success);
+            border: 1px solid rgba(5, 150, 105, 0.18);
+            font-weight: 600;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .status-badge.error {
+            background: rgba(220, 38, 38, 0.12);
+            color: var(--danger);
+            border-color: rgba(220, 38, 38, 0.18);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+
+        .top-grid {
+            display: grid;
+            grid-template-columns: 1.2fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .glass-panel {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 18px 40px rgba(148, 163, 184, 0.14);
+            animation: fadeIn 0.8s ease-out;
+        }
+
+        .panel-title {
+            font-size: 1.2rem;
+            color: var(--text-muted);
+            margin-top: 0;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            font-weight: 600;
+        }
+
+        /* 爬虫卡片 */
+        .spider-card {
+            background: rgba(255, 255, 255, 0.72);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.3s ease;
+        }
+        .spider-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(37, 99, 235, 0.28);
+            box-shadow: 0 12px 28px rgba(37, 99, 235, 0.08);
+        }
+        .spider-info h3 {
+            margin: 0 0 5px 0;
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+        .spider-info p {
+            margin: 0;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .btn-trigger {
+            background: linear-gradient(135deg, var(--primary) 0%, #3b82f6 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            box-shadow: 0 8px 16px rgba(37, 99, 235, 0.16);
+        }
+        .btn-trigger:hover {
+            transform: scale(1.05);
+            box-shadow: 0 10px 20px rgba(37, 99, 235, 0.22);
+        }
+        .btn-trigger:active {
+            transform: scale(0.95);
+        }
+
+        /* 运行状况表格 */
+        .log-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .log-table th {
+            text-align: left;
+            color: var(--text-muted);
+            font-weight: 600;
+            padding-bottom: 15px;
+            border-bottom: 1px solid var(--glass-border);
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            letter-spacing: 1px;
+        }
+        .log-table td {
+            padding: 15px 0;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+            font-size: 0.95rem;
+            vertical-align: top;
+        }
+        .log-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .state-tag {
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .state-COMPLETED { background: rgba(5, 150, 105, 0.12); color: var(--success); }
+        .state-FAILED { background: rgba(220, 38, 38, 0.12); color: var(--danger); }
+        .state-RUNNING { background: rgba(37, 99, 235, 0.12); color: var(--running); }
+        .state-SCHEDULED { background: rgba(245, 158, 11, 0.14); color: #b45309; }
+        .state-PENDING { background: rgba(148, 163, 184, 0.14); color: var(--text-muted); }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .pulse {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: currentColor;
+            animation: pulse-animation 2s infinite;
+        }
+        @keyframes pulse-animation {
+            0% { box-shadow: 0 0 0 0 rgba(5, 150, 105, 0.35); }
+            70% { box-shadow: 0 0 0 6px rgba(5, 150, 105, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(5, 150, 105, 0); }
+        }
+
+        /* 加载动画 */
+        .loader {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+        }
+
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            padding: 18px 20px;
+            border-radius: 14px;
+            background: rgba(248, 250, 252, 0.92);
+            border: 1px solid var(--glass-border);
+        }
+
+        .setting-text h3 {
+            margin: 0 0 6px 0;
+            font-size: 1.05rem;
+        }
+
+        .setting-text p {
+            margin: 0;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        .toggle-wrap {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .toggle-label {
+            min-width: 52px;
+            text-align: right;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 58px;
+            height: 32px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            inset: 0;
+            background-color: rgba(220, 38, 38, 0.28);
+            transition: .2s;
+            border-radius: 999px;
+            border: 1px solid rgba(148, 163, 184, 0.25);
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 24px;
+            width: 24px;
+            left: 4px;
+            top: 3px;
+            background-color: white;
+            transition: .2s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background: rgba(5, 150, 105, 0.32);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(25px);
+        }
+
+        .btn-refresh {
+            background: rgba(255,255,255,0.88);
+            color: var(--text-main);
+            border: 1px solid var(--glass-border);
+            padding: 10px 14px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+            margin-bottom: 22px;
+        }
+
+        .summary-card {
+            border: 1px solid var(--glass-border);
+            border-radius: 14px;
+            padding: 16px 18px;
+            background: rgba(255, 255, 255, 0.78);
+        }
+
+        .summary-card .label {
+            color: var(--text-muted);
+            font-size: 0.82rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+
+        .summary-card .value {
+            font-size: 1.8rem;
+            font-weight: 800;
+            line-height: 1;
+        }
+
+        .value.ok { color: var(--success); }
+        .value.bad { color: var(--danger); }
+        .value.run { color: var(--running); }
+
+        .mini-note {
+            color: var(--text-muted);
+            font-size: 0.82rem;
+            margin-bottom: 12px;
+        }
+
+        .run-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .run-meta {
+            color: var(--text-muted);
+            font-size: 0.82rem;
+        }
+
+        .generator-panel {
+            margin-bottom: 30px;
+        }
+
+        .generator-grid {
+            display: grid;
+            grid-template-columns: 0.9fr 1.1fr;
+            gap: 24px;
+        }
+
+        .form-field {
+            margin-bottom: 16px;
+        }
+
+        .form-field label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 0.92rem;
+            font-weight: 700;
+            color: #334155;
+        }
+
+        .text-input,
+        .text-area,
+        .code-editor {
+            width: 100%;
+            box-sizing: border-box;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.92);
+            color: var(--text-main);
+            padding: 12px 14px;
+            font: inherit;
+        }
+
+        .text-area {
+            min-height: 180px;
+            resize: vertical;
+            line-height: 1.6;
+        }
+
+        .code-editor {
+            min-height: 220px;
+            resize: vertical;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.9rem;
+            line-height: 1.55;
+        }
+
+        .generator-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 8px;
+            margin-bottom: 14px;
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.88);
+            color: var(--primary);
+            border: 1px solid rgba(37, 99, 235, 0.2);
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .btn-secondary:disabled,
+        .btn-trigger:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .generator-status {
+            border-radius: 12px;
+            padding: 12px 14px;
+            background: rgba(248, 250, 252, 0.92);
+            border: 1px solid var(--glass-border);
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+
+        .generator-status.ok {
+            color: var(--success);
+            border-color: rgba(5, 150, 105, 0.18);
+            background: rgba(5, 150, 105, 0.06);
+        }
+
+        .generator-status.bad {
+            color: var(--danger);
+            border-color: rgba(220, 38, 38, 0.18);
+            background: rgba(220, 38, 38, 0.06);
+        }
+
+        .preview-stack {
+            display: grid;
+            gap: 14px;
+        }
+
+        .preview-card {
+            border: 1px solid var(--glass-border);
+            border-radius: 14px;
+            padding: 14px;
+            background: rgba(255, 255, 255, 0.72);
+        }
+
+        .preview-title {
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .file-path {
+            color: var(--text-muted);
+            font-size: 0.84rem;
+            margin-bottom: 10px;
+        }
+
+        .card-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        @media (max-width: 1080px) {
+            .top-grid,
+            .grid,
+            .generator-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>深网捕获 · 指挥中心</h1>
+        <div class="status-badge" id="api-status">
+            <div class="pulse"></div> Prefect 核心引擎离线
+        </div>
+    </div>
+
+    <div class="top-grid">
+        <div class="glass-panel">
+            <h2 class="panel-title">控制开关</h2>
+            <div class="setting-row">
+                <div class="setting-text">
+                    <h3>Kafka 推送</h3>
+                    <p>关闭后保留 ClickHouse 入库，但不会继续向 Kafka 发送数据。</p>
+                </div>
+                <div class="toggle-wrap">
+                    <span class="toggle-label" id="kafka-switch-label">读取中</span>
+                    <label class="switch">
+                        <input type="checkbox" id="kafka-switch" onchange="toggleKafka(this)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-panel">
+            <h2 class="panel-title">系统说明</h2>
+            <div class="setting-row">
+                <div class="setting-text">
+                    <h3>运行时配置已接入</h3>
+                    <p>开关写入共享配置文件，worker 无需重启即可读取最新值。</p>
+                </div>
+                <button class="btn-refresh" onclick="fetchDashboard()">立即刷新</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="glass-panel generator-panel">
+        <h2 class="panel-title">AI 生成爬虫</h2>
+        <div class="generator-grid">
+            <div>
+                <div class="form-field">
+                    <label for="gen-module-slug">模块代号</label>
+                    <input id="gen-module-slug" class="text-input" placeholder="例如 nrta_special_news，只能包含字母数字和下划线">
+                </div>
+                <div class="form-field">
+                    <label for="gen-requirement">生成需求</label>
+                    <textarea id="gen-requirement" class="text-area" placeholder="例如：为 https://example.com/news/index.html 生成一个详情页抓取爬虫。要求每日执行一次，只抓第一页，输出统一字段结构，accountcode 为 xxx，正文提取 article 内容区，发布时间取页面 time 标签。"></textarea>
+                </div>
+                <div class="generator-actions">
+                    <button class="btn-trigger" id="btn-generate" onclick="generateSpider(this)">生成代码</button>
+                    <button class="btn-secondary" id="btn-deploy-generated" onclick="deployGeneratedSpider(this)" disabled>写入并交给 Worker 部署</button>
+                </div>
+                <div class="generator-status" id="generator-status">
+                    这里会显示 AI 生成能力状态、生成结果摘要，以及交给 worker 部署的回执。
+                </div>
+            </div>
+            <div class="preview-stack">
+                <div class="preview-card">
+                    <div class="preview-title">Spider 文件</div>
+                    <div class="file-path" id="spider-path-label">尚未生成</div>
+                    <textarea id="spider-code" class="code-editor" placeholder="生成后会在这里展示 spider 代码，你可以先人工调整，再点击部署。"></textarea>
+                </div>
+                <div class="preview-card">
+                    <div class="preview-title">Deploy 文件</div>
+                    <div class="file-path" id="deploy-path-label">尚未生成</div>
+                    <textarea id="deploy-code" class="code-editor" placeholder="生成后会在这里展示 deploy 代码。"></textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid">
+        <!-- 部署的爬虫列表 -->
+        <div class="glass-panel">
+            <h2 class="panel-title">📡 待命爬虫矩阵</h2>
+            <div id="deployments-container">
+                <div class="loader">扫描节点队列中...</div>
+            </div>
+        </div>
+
+        <!-- 历史运行记录 -->
+        <div class="glass-panel">
+            <h2 class="panel-title">⚡ 节点工况监控</h2>
+            <div class="summary-grid" id="summary-container">
+                <div class="summary-card"><div class="label">待命部署</div><div class="value">-</div></div>
+                <div class="summary-card"><div class="label">运行中</div><div class="value">-</div></div>
+                <div class="summary-card"><div class="label">24h 成功</div><div class="value">-</div></div>
+                <div class="summary-card"><div class="label">24h 失败</div><div class="value">-</div></div>
+            </div>
+            <div class="mini-note">仅展示最近实际执行过的任务，不再混入未来调度中的 Scheduled 记录。</div>
+            <table class="log-table">
+                <thead>
+                    <tr>
+                        <th>任务</th>
+                        <th>运行状态</th>
+                        <th>触发方式</th>
+                        <th>开始时间</th>
+                        <th>耗时</th>
+                    </tr>
+                </thead>
+                <tbody id="runs-container">
+                    <tr><td colspan="5" class="loader">读取核心日志中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let generatedDraft = null;
+
+        async function fetchDashboard() {
+            try {
+                const res = await fetch('/api/dashboard_state');
+                const data = await res.json();
+                
+                // 更新连接状态
+                const statusBadge = document.getElementById('api-status');
+                if (data.api_health === 'UP' && !data.error) {
+                    statusBadge.innerHTML = '<div class="pulse"></div> Prefect 核心引擎已连接';
+                    statusBadge.className = 'status-badge';
+                } else {
+                    statusBadge.innerHTML = '核心引擎离线 (' + (data.error || '连接失败') + ')';
+                    statusBadge.className = 'status-badge error';
+                }
+
+                renderDeployments(data.deployments || []);
+                renderFlowRuns(data.flow_runs || []);
+                renderRunSummary(data.run_summary || {});
+                renderSettings(data.settings || {});
+                renderGeneratorStatus(data.generator || {});
+            } catch (err) {
+                console.error('获取大屏数据失败', err);
+            }
+        }
+
+        function setGeneratorMessage(message, type='') {
+            const box = document.getElementById('generator-status');
+            box.className = `generator-status ${type}`.trim();
+            box.innerText = message;
+        }
+
+        function setActionButtonState(btn, text, type='') {
+            btn.innerText = text;
+            btn.style.opacity = '0.85';
+            if (type === 'ok') {
+                btn.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
+                btn.style.color = '#fff';
+                btn.style.borderColor = 'transparent';
+            } else if (type === 'bad') {
+                btn.style.background = 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)';
+                btn.style.color = '#fff';
+                btn.style.borderColor = 'transparent';
+            } else {
+                btn.style.background = '';
+                btn.style.color = '';
+                btn.style.borderColor = '';
+            }
+        }
+
+        function resetActionButton(btn, originalText) {
+            btn.innerText = originalText;
+            btn.disabled = false;
+            btn.style.opacity = '';
+            btn.style.background = '';
+            btn.style.color = '';
+            btn.style.borderColor = '';
+        }
+
+        function renderGeneratorStatus(generator) {
+            if (!generator || Object.keys(generator).length === 0) {
+                return;
+            }
+            if (!generator.enabled) {
+                setGeneratorMessage(
+                    `AI 生成功能未配置。请先配置本地 Codex helper 或远程模型参数。项目目录：${generator.project_root || '-'}。`,
+                    'bad'
+                );
+                return;
+            }
+            if (!generatedDraft) {
+                setGeneratorMessage(
+                    `AI 生成功能已就绪，提供方：${generator.provider || '-'}，模型：${generator.model || '-'}。生成后的部署会转交给 worker 侧部署注册器 ${generator.manager_deployment || '-' }。`,
+                    'ok'
+                );
+            }
+        }
+
+        function renderRunSummary(summary) {
+            const container = document.getElementById('summary-container');
+            const cards = [
+                { label: '待命部署', value: summary.deployment_count ?? 0, cls: '' },
+                { label: '运行中', value: summary.running_count ?? 0, cls: 'run' },
+                { label: '24h 成功', value: summary.success_24h ?? 0, cls: 'ok' },
+                { label: '24h 失败', value: summary.failed_24h ?? 0, cls: 'bad' },
+            ];
+            container.innerHTML = cards.map(card => `
+                <div class="summary-card">
+                    <div class="label">${card.label}</div>
+                    <div class="value ${card.cls}">${card.value}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderSettings(settings) {
+            const enabled = settings.enable_kafka !== false;
+            const input = document.getElementById('kafka-switch');
+            const label = document.getElementById('kafka-switch-label');
+            input.checked = enabled;
+            label.innerText = enabled ? '开启' : '关闭';
+            label.style.color = enabled ? 'var(--success)' : 'var(--danger)';
+        }
+
+        function renderDeployments(deps) {
+            const container = document.getElementById('deployments-container');
+            if (deps.length === 0) {
+                container.innerHTML = '<div class="loader">当前暂无注册的爬虫，请在终端执行 deploy_all.py 注册任务。</div>';
+                return;
+            }
+
+            let html = '';
+            deps.forEach(dep => {
+                const displayName = dep.display_name || dep.name;
+                html += `
+                    <div class="spider-card">
+                        <div class="spider-info">
+                            <h3>${displayName}</h3>
+                            <p>部署标识: ${dep.name}</p>
+                        </div>
+                        <div class="card-actions">
+                            <button class="btn-secondary" onclick="redeploySpider('${dep.name}', this)">重新部署</button>
+                            <button class="btn-trigger" onclick="triggerSpider('${dep.id}', this)">立即运行</button>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function renderFlowRuns(runs) {
+            const container = document.getElementById('runs-container');
+            if (runs.length === 0) {
+                container.innerHTML = '<tr><td colspan="5" class="loader">暂无实际执行记录</td></tr>';
+                return;
+            }
+
+            let html = '';
+            runs.forEach(run => {
+                const date = new Date(run.start_time || run.created).toLocaleString();
+                const stat = run.state_name ? run.state_name.toUpperCase() : 'UNKNOWN';
+                const duration = Number(run.duration_seconds || 0);
+                const durationText = duration <= 0 ? '-' : (duration < 60 ? `${duration.toFixed(1)}s` : `${(duration / 60).toFixed(1)}m`);
+                
+                html += `
+                    <tr>
+                        <td>
+                            <div class="run-name">${run.display_name || run.name}</div>
+                            <div class="run-meta">#${run.id.substring(0, 8)}</div>
+                        </td>
+                        <td><span class="state-tag state-${stat}">${stat}</span></td>
+                        <td style="color: var(--text-muted); font-size: 0.85rem">${run.trigger_label || '-'}</td>
+                        <td style="color: var(--text-muted); font-size: 0.85rem">${date}</td>
+                        <td style="color: var(--text-muted); font-size: 0.85rem">${durationText}</td>
+                    </tr>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        async function generateSpider(btn) {
+            const moduleSlug = document.getElementById('gen-module-slug').value.trim();
+            const requirement = document.getElementById('gen-requirement').value.trim();
+            if (!moduleSlug) {
+                setGeneratorMessage('请先填写模块代号。', 'bad');
+                return;
+            }
+            if (requirement.length < 20) {
+                setGeneratorMessage('需求描述太短，至少写清站点、抓取范围、字段和调度要求。', 'bad');
+                return;
+            }
+
+            const originalText = btn.innerText;
+            btn.innerText = '生成中...';
+            btn.disabled = true;
+            setGeneratorMessage('AI 正在生成 spider 和 deploy 文件，请稍候。');
+
+            try {
+                const res = await fetch('/api/generator/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        module_slug: moduleSlug,
+                        requirement
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.detail || '生成失败');
+                }
+
+                generatedDraft = data;
+                document.getElementById('spider-path-label').innerText = data.spider_path;
+                document.getElementById('deploy-path-label').innerText = data.deploy_path;
+                document.getElementById('spider-code').value = data.spider_code || '';
+                document.getElementById('deploy-code').value = data.deploy_code || '';
+                document.getElementById('btn-deploy-generated').disabled = false;
+                setGeneratorMessage(data.summary || '代码已生成，可以先检查，再交给 worker 部署。', 'ok');
+            } catch (e) {
+                generatedDraft = null;
+                document.getElementById('btn-deploy-generated').disabled = true;
+                setGeneratorMessage(`生成失败：${e.message}`, 'bad');
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        async function deployGeneratedSpider(btn) {
+            if (!generatedDraft) {
+                setGeneratorMessage('请先生成代码。', 'bad');
+                return;
+            }
+
+            const originalText = btn.innerText;
+            btn.innerText = '提交中...';
+            btn.disabled = true;
+            setGeneratorMessage('正在写入文件，并提交给 worker 侧部署注册器。');
+
+            try {
+                const res = await fetch('/api/generator/deploy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        module_slug: generatedDraft.module_slug,
+                        spider_path: generatedDraft.spider_path,
+                        deploy_path: generatedDraft.deploy_path,
+                        spider_code: document.getElementById('spider-code').value,
+                        deploy_code: document.getElementById('deploy-code').value,
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.detail || '部署提交失败');
+                }
+                setGeneratorMessage(
+                    `${data.message}。worker 已收到 ${data.deploy_script} 的注册请求。`,
+                    'ok'
+                );
+                setTimeout(() => fetchDashboard(), 1200);
+            } catch (e) {
+                setGeneratorMessage(`部署提交失败：${e.message}`, 'bad');
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        async function triggerSpider(depId, btn) {
+            const originalText = btn.innerText;
+            btn.disabled = true;
+            setActionButtonState(btn, '运行中...');
+            
+            try {
+                const res = await fetch('/api/trigger/' + depId, { method: 'POST' });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok) {
+                    setActionButtonState(btn, '运行已创建', 'ok');
+                    setGeneratorMessage(`已创建运行任务，flow run: ${data?.data?.id || '-'}`, 'ok');
+                    setTimeout(() => fetchDashboard(), 1000);
+                } else {
+                    setActionButtonState(btn, '运行失败', 'bad');
+                    setGeneratorMessage(`立即运行失败：${data.detail || '请求未成功'}`, 'bad');
+                }
+            } catch (e) {
+                setActionButtonState(btn, '运行失败', 'bad');
+                setGeneratorMessage(`立即运行失败：${e.message}`, 'bad');
+            }
+
+            setTimeout(() => {
+                resetActionButton(btn, originalText);
+            }, 3000);
+        }
+
+        async function redeploySpider(deploymentName, btn) {
+            const originalText = btn.innerText;
+            btn.disabled = true;
+            setActionButtonState(btn, '部署中...');
+
+            try {
+                const res = await fetch('/api/redeploy/' + encodeURIComponent(deploymentName), { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.detail || '重新部署失败');
+                }
+                setActionButtonState(btn, '已提交', 'ok');
+                setGeneratorMessage(`${deploymentName} 已提交重新部署，worker 将执行 ${data.deploy_script}。`, 'ok');
+                setTimeout(() => fetchDashboard(), 1000);
+            } catch (e) {
+                setActionButtonState(btn, '部署失败', 'bad');
+                setGeneratorMessage(`重新部署失败：${e.message}`, 'bad');
+            }
+
+            setTimeout(() => {
+                resetActionButton(btn, originalText);
+            }, 3000);
+        }
+
+        async function toggleKafka(input) {
+            const enabled = input.checked;
+            const label = document.getElementById('kafka-switch-label');
+            label.innerText = '保存中';
+            try {
+                const res = await fetch('/api/settings/kafka', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enable_kafka: enabled })
+                });
+                if (!res.ok) {
+                    throw new Error('保存失败');
+                }
+                renderSettings(await (await fetch('/api/settings')).json());
+            } catch (e) {
+                input.checked = !enabled;
+                renderSettings({ enable_kafka: !enabled });
+                alert('Kafka 开关更新失败');
+            }
+        }
+
+        // 初始化加载并每 5 秒轮询刷新一次大屏
+        fetchDashboard();
+        setInterval(fetchDashboard, 5000);
+    </script>
+</body>
+</html>
