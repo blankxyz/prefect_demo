@@ -35,5 +35,9 @@ traceback.log
 .DS_Store
 Thumbs.db
 
+# Runtime data
+result.json
+runtime/ai_helpers.json
+
 # Docker
 .dockerignore

@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 爬虫生成器 | Deep Crawler Matrix</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <!-- CodeMirror：Python 语法高亮编辑器（CDN，无需构建工具） -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/theme/material-darker.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/python/python.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #f3f4f6;
+            --glass-bg: rgba(255, 255, 255, 0.82);
+            --glass-border: rgba(148, 163, 184, 0.22);
+            --text-main: #111827;
+            --text-muted: #6b7280;
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --success: #059669;
+            --danger: #dc2626;
+            --running: #2563eb;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Inter', -apple-system, sans-serif;
+            margin: 0;
+            padding: 40px;
+            background-image: radial-gradient(circle at top right, rgba(148, 163, 184, 0.14), transparent 420px),
+                              radial-gradient(circle at bottom left, rgba(226, 232, 240, 0.85), transparent 420px);
+            min-height: 100vh;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 40px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin: 0;
+            background: linear-gradient(135deg, #334155 0%, #2563eb 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 800;
+        }
+
+        .nav-link {
+            background: rgba(255, 255, 255, 0.88);
+            color: var(--primary);
+            border: 1px solid rgba(37, 99, 235, 0.2);
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+        .nav-link:hover {
+            background: rgba(37, 99, 235, 0.06);
+            border-color: rgba(37, 99, 235, 0.35);
+        }
+
+        .glass-panel {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 18px 40px rgba(148, 163, 184, 0.14);
+            animation: fadeIn 0.8s ease-out;
+            margin-bottom: 24px;
+        }
+
+        .panel-title {
+            font-size: 1.2rem;
+            color: var(--text-muted);
+            margin-top: 0;
+            margin-bottom: 24px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            font-weight: 600;
+        }
+
+        .generator-grid {
+            display: grid;
+            grid-template-columns: 0.9fr 1.1fr;
+            gap: 24px;
+        }
+
+        .form-field {
+            margin-bottom: 16px;
+        }
+
+        .form-field label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 0.92rem;
+            font-weight: 700;
+            color: #334155;
+        }
+
+        .text-input,
+        .text-area {
+            width: 100%;
+            box-sizing: border-box;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.92);
+            color: var(--text-main);
+            padding: 12px 14px;
+            font: inherit;
+        }
+
+        .text-area {
+            min-height: 180px;
+            resize: vertical;
+            line-height: 1.6;
+        }
+
+        /* ── CodeMirror 编辑器容器样式 ── */
+        .code-editor-wrap {
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .code-editor-wrap .CodeMirror {
+            height: 280px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.88rem;
+            line-height: 1.6;
+            border-radius: 12px;
+        }
+
+        .generator-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 8px;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+        }
+
+        .btn-trigger {
+            background: linear-gradient(135deg, var(--primary) 0%, #3b82f6 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            box-shadow: 0 8px 16px rgba(37, 99, 235, 0.16);
+        }
+        .btn-trigger:hover {
+            transform: scale(1.05);
+            box-shadow: 0 10px 20px rgba(37, 99, 235, 0.22);
+        }
+        .btn-trigger:active {
+            transform: scale(0.95);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.88);
+            color: var(--primary);
+            border: 1px solid rgba(37, 99, 235, 0.2);
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, var(--success) 0%, #34d399 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            box-shadow: 0 4px 12px rgba(5, 150, 105, 0.2);
+        }
+
+        .btn-secondary:disabled,
+        .btn-trigger:disabled,
+        .btn-success:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .generator-status {
+            border-radius: 12px;
+            padding: 12px 14px;
+            background: rgba(248, 250, 252, 0.92);
+            border: 1px solid var(--glass-border);
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+
+        .generator-status.ok {
+            color: var(--success);
+            border-color: rgba(5, 150, 105, 0.18);
+            background: rgba(5, 150, 105, 0.06);
+        }
+
+        .generator-status.bad {
+            color: var(--danger);
+            border-color: rgba(220, 38, 38, 0.18);
+            background: rgba(220, 38, 38, 0.06);
+        }
+
+        .generator-status.streaming {
+            color: var(--primary);
+            border-color: rgba(37, 99, 235, 0.18);
+            background: rgba(37, 99, 235, 0.04);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.82rem;
+            max-height: 120px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .preview-stack {
+            display: grid;
+            gap: 14px;
+        }
+
+        .preview-card {
+            border: 1px solid var(--glass-border);
+            border-radius: 14px;
+            padding: 14px;
+            background: rgba(255, 255, 255, 0.72);
+        }
+
+        .preview-title {
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .file-path {
+            color: var(--text-muted);
+            font-size: 0.84rem;
+            margin-bottom: 10px;
+        }
+
+        .helper-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
+            padding: 14px 18px;
+            background: rgba(248, 250, 252, 0.92);
+            border: 1px solid var(--glass-border);
+            border-radius: 14px;
+        }
+
+        .helper-bar label {
+            font-weight: 700;
+            font-size: 0.92rem;
+            color: #334155;
+            white-space: nowrap;
+        }
+
+        .helper-select {
+            flex: 1;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.92);
+            color: var(--text-main);
+            padding: 8px 12px;
+            font: inherit;
+            font-size: 0.95rem;
+            cursor: pointer;
+        }
+
+        /* 对话区 */
+        .conversation-history {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 16px;
+            max-height: 240px;
+            overflow-y: auto;
+        }
+
+        .chat-bubble {
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            max-width: 90%;
+        }
+
+        .chat-bubble.user {
+            background: rgba(37, 99, 235, 0.08);
+            border: 1px solid rgba(37, 99, 235, 0.15);
+            align-self: flex-end;
+        }
+
+        .chat-bubble.assistant {
+            background: rgba(5, 150, 105, 0.06);
+            border: 1px solid rgba(5, 150, 105, 0.15);
+            align-self: flex-start;
+        }
+
+        .chat-bubble .role-label {
+            font-weight: 700;
+            font-size: 0.78rem;
+            margin-bottom: 4px;
+            color: var(--text-muted);
+        }
+
+        .refine-input-row {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        .refine-input-row textarea {
+            flex: 1;
+            min-height: 64px;
+            resize: vertical;
+        }
+
+        /* 预览结果表格 */
+        .preview-table-wrap {
+            overflow-x: auto;
+            margin-top: 12px;
+        }
+
+        .preview-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        .preview-table th {
+            background: rgba(37, 99, 235, 0.08);
+            padding: 8px 12px;
+            text-align: left;
+            font-weight: 700;
+            border-bottom: 2px solid rgba(37, 99, 235, 0.15);
+            white-space: nowrap;
+        }
+
+        .preview-table td {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--glass-border);
+            vertical-align: top;
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .preview-table tr:hover td {
+            background: rgba(248, 250, 252, 0.8);
+        }
+
+        .preview-error {
+            color: var(--danger);
+            font-size: 0.9rem;
+            padding: 12px 14px;
+            background: rgba(220, 38, 38, 0.05);
+            border: 1px solid rgba(220, 38, 38, 0.15);
+            border-radius: 10px;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @media (max-width: 1080px) {
+            .generator-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="header-left">
+            <a href="/" class="nav-link">← 返回主控台</a>
+            <h1>AI 爬虫生成器</h1>
+        </div>
+    </div>
+
+    <!-- 主生成面板 -->
+    <div class="glass-panel">
+        <h2 class="panel-title">生成爬虫代码</h2>
+        <div class="helper-bar">
+            <label for="helper-select">AI Helper</label>
+            <select id="helper-select" class="helper-select">
+                <option value="">加载中...</option>
+            </select>
+        </div>
+        <div class="generator-grid">
+            <div>
+                <div class="form-field">
+                    <label for="gen-module-slug">模块代号</label>
+                    <input id="gen-module-slug" class="text-input" placeholder="例如 nrta_special_news，只能包含字母数字和下划线">
+                </div>
+                <div class="form-field">
+                    <label for="gen-requirement">生成需求</label>
+                    <textarea id="gen-requirement" class="text-area" placeholder="例如：为 https://example.com/news/index.html 生成一个详情页抓取爬虫。要求每日执行一次，只抓第一页，输出统一字段结构，accountcode 为 xxx，正文提取 article 内容区，发布时间取页面 time 标签。"></textarea>
+                </div>
+                <div class="generator-actions">
+                    <button class="btn-trigger" id="btn-generate" onclick="generateSpider(this)">生成代码</button>
+                    <button class="btn-secondary" id="btn-deploy-generated" onclick="deployGeneratedSpider(this)" disabled>写入并交给 Worker 部署</button>
+                    <button class="btn-success" id="btn-preview" onclick="previewSpider(this)" disabled>预览数据</button>
+                </div>
+                <div class="generator-status" id="generator-status">
+                    这里会显示 AI 生成能力状态、生成进度，以及交给 worker 部署的回执。
+                </div>
+            </div>
+            <div class="preview-stack">
+                <div class="preview-card">
+                    <div class="preview-title">Spider 文件</div>
+                    <div class="file-path" id="spider-path-label">尚未生成</div>
+                    <!-- CodeMirror 接管：替换原始 textarea，保留 Python 语法高亮 + Tab=4空格 + 行号 -->
+                    <div class="code-editor-wrap">
+                        <textarea id="spider-code" placeholder="生成后会在这里展示 spider 代码，你可以先人工调整，再点击部署。"></textarea>
+                    </div>
+                </div>
+                <div class="preview-card">
+                    <div class="preview-title">Deploy 文件</div>
+                    <div class="file-path" id="deploy-path-label">尚未生成</div>
+                    <div class="code-editor-wrap">
+                        <textarea id="deploy-code" placeholder="生成后会在这里展示 deploy 代码。"></textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 对话式迭代面板（生成成功后显示） -->
+    <div class="glass-panel" id="conversation-panel" style="display:none">
+        <h2 class="panel-title">对话式迭代</h2>
+        <div class="conversation-history" id="conversation-history"></div>
+        <div class="refine-input-row">
+            <textarea id="refine-input" class="text-area" style="min-height:64px" placeholder="描述问题或调整需求，例如：URL 解析有问题，应该用 CSS 选择器而不是 XPath..."></textarea>
+            <button class="btn-trigger" onclick="refineSpider(this)" id="btn-refine">重新生成</button>
+        </div>
+    </div>
+
+    <!-- 预览结果面板（点击预览后显示） -->
+    <div class="glass-panel" id="preview-result-panel" style="display:none">
+        <h2 class="panel-title">预览数据（前 5 条）</h2>
+        <div id="preview-result-content"></div>
+    </div>
+
+    <script>
+        // ────────────────────────────────────────────
+        // CodeMirror 初始化：Python 高亮 + 行号 + Tab=4空格
+        // ────────────────────────────────────────────
+        const spiderEditor = CodeMirror.fromTextArea(document.getElementById('spider-code'), {
+            mode: 'python',
+            theme: 'material-darker',
+            lineNumbers: true,
+            indentUnit: 4,
+            tabSize: 4,
+            indentWithTabs: false,
+            // Tab 键插入 4 个空格，不再跳焦点
+            extraKeys: {
+                Tab: (cm) => {
+                    if (cm.somethingSelected()) {
+                        cm.indentSelection('add');
+                    } else {
+                        cm.replaceSelection('    ', 'end');
+                    }
+                },
+                'Shift-Tab': (cm) => cm.indentSelection('subtract'),
+            },
+            lineWrapping: false,
+        });
+
+        const deployEditor = CodeMirror.fromTextArea(document.getElementById('deploy-code'), {
+            mode: 'python',
+            theme: 'material-darker',
+            lineNumbers: true,
+            indentUnit: 4,
+            tabSize: 4,
+            indentWithTabs: false,
+            extraKeys: {
+                Tab: (cm) => {
+                    if (cm.somethingSelected()) {
+                        cm.indentSelection('add');
+                    } else {
+                        cm.replaceSelection('    ', 'end');
+                    }
+                },
+                'Shift-Tab': (cm) => cm.indentSelection('subtract'),
+            },
+            lineWrapping: false,
+        });
+
+        // ────────────────────────────────────────────
+        // 业务逻辑
+        // ────────────────────────────────────────────
+        let generatedDraft = null;
+        let conversationHistory = [];
+        let progressLineCount = 0;
+        const PROGRESS_LINE_LIMIT = 260;
+
+        function escapeHtml(str) {
+            return String(str == null ? '' : str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function setGeneratorMessage(message, type = '') {
+            const box = document.getElementById('generator-status');
+            box.className = `generator-status ${type}`.trim();
+            box.innerText = message;
+        }
+
+        function appendProgressLine(line) {
+            const box = document.getElementById('generator-status');
+            box.className = 'generator-status streaming';
+            progressLineCount += 1;
+            if (progressLineCount <= PROGRESS_LINE_LIMIT) {
+                box.textContent += line + '\n';
+            } else if (progressLineCount === PROGRESS_LINE_LIMIT + 1) {
+                box.textContent += '[提示] 日志过长，后续进度已省略，等待最终结果...\n';
+            }
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function applyGeneratedDraft(data) {
+            generatedDraft = data;
+            conversationHistory = [];
+            document.getElementById('spider-path-label').innerText = data.spider_path || '';
+            document.getElementById('deploy-path-label').innerText = data.deploy_path || '';
+            spiderEditor.setValue(data.spider_code || '');
+            deployEditor.setValue(data.deploy_code || '');
+            document.getElementById('btn-deploy-generated').disabled = false;
+            document.getElementById('btn-preview').disabled = false;
+            const validated = Boolean(data.validated);
+            const preview = data.preview || {};
+            if (validated) {
+                setGeneratorMessage(
+                    data.summary || `代码已生成并通过验证（第 ${data.attempt || 1}/${data.max_attempts || 1} 次）。`,
+                    'ok'
+                );
+            } else if (preview.status === 'done' && Number(preview.count || 0) === 0) {
+                setGeneratorMessage('代码已生成，但自动验证抓取结果为 0 条，请检查规则。', 'bad');
+            } else if (preview.status === 'error') {
+                setGeneratorMessage(`代码已生成，但自动验证失败：${preview.message || '未知错误'}`, 'bad');
+            } else {
+                setGeneratorMessage(data.summary || '代码已生成，可先检查，再交给 worker 部署。', 'ok');
+            }
+            appendConversation('assistant', `已生成 ${data.spider_path}。如有问题，请在下方描述后点击「重新生成」。`);
+            document.getElementById('conversation-panel').style.display = '';
+
+            if (preview && (preview.status === 'done' || preview.status === 'error')) {
+                document.getElementById('preview-result-panel').style.display = '';
+                if (preview.status === 'done') {
+                    renderPreviewResults(preview);
+                } else {
+                    document.getElementById('preview-result-content').innerHTML =
+                        `<div class="preview-error">自动验证失败：${escapeHtml(preview.message || '未知错误')}</div>`;
+                }
+            }
+        }
+
+        async function generateSpiderFallback(moduleSlug, requirement, helperId) {
+            const res = await fetch('/api/generator/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ module_slug: moduleSlug, requirement, helper_id: helperId })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: res.statusText }));
+                throw new Error(err.detail || '请求失败');
+            }
+            return await res.json();
+        }
+
+        async function loadHelpers() {
+            try {
+                const res = await fetch('/api/generator/helpers');
+                const data = await res.json();
+                const helpers = data.helpers || [];
+                const select = document.getElementById('helper-select');
+                if (helpers.length === 0) {
+                    select.innerHTML = '<option value="">无可用 Helper</option>';
+                    return;
+                }
+                select.innerHTML = helpers.map(h => {
+                    const label = h.model ? `${h.name}（${h.model}）` : h.name;
+                    return `<option value="${escapeHtml(h.id)}">${escapeHtml(label)}</option>`;
+                }).join('');
+            } catch (err) {
+                console.error('加载 Helper 列表失败', err);
+            }
+        }
+
+        async function initGeneratorStatus() {
+            try {
+                const res = await fetch('/api/dashboard_state');
+                const data = await res.json();
+                const generator = data.generator || {};
+                if (Object.keys(generator).length === 0) return;
+
+                if (!generator.enabled) {
+                    setGeneratorMessage(
+                        `AI 生成功能未配置。请检查 runtime/ai_helpers.json 或环境变量。项目目录：${generator.project_root || '-'}。`,
+                        'bad'
+                    );
+                    return;
+                }
+                const helperSelect = document.getElementById('helper-select');
+                const selectedText = helperSelect.options[helperSelect.selectedIndex]?.text || '-';
+                setGeneratorMessage(
+                    `AI 生成功能已就绪，共 ${generator.helper_count} 个 Helper，当前选中：${selectedText}。点击「生成代码」开始流式生成。`,
+                    'ok'
+                );
+            } catch (err) {
+                console.error('获取生成器状态失败', err);
+            }
+        }
+
+        async function generateSpider(btn) {
+            const moduleSlug = document.getElementById('gen-module-slug').value.trim();
+            const requirement = document.getElementById('gen-requirement').value.trim();
+            const helperId = document.getElementById('helper-select').value;
+            if (!moduleSlug) {
+                setGeneratorMessage('请先填写模块代号。', 'bad');
+                return;
+            }
+            if (requirement.length < 20) {
+                setGeneratorMessage('需求描述太短，至少写清站点、抓取范围、字段和调度要求。', 'bad');
+                return;
+            }
+
+            const originalText = btn.innerText;
+            btn.innerText = '生成中...';
+            btn.disabled = true;
+            document.getElementById('btn-deploy-generated').disabled = true;
+            document.getElementById('btn-preview').disabled = true;
+            document.getElementById('conversation-panel').style.display = 'none';
+
+            // 清空状态区，准备滚动日志
+            const statusBox = document.getElementById('generator-status');
+            statusBox.className = 'generator-status streaming';
+            statusBox.textContent = '正在执行：代码生成 -> 预览验证 -> 自动重试（最多 3 次）...\n';
+            progressLineCount = 0;
+
+            try {
+                const res = await fetch('/api/generator/generate-validated', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ module_slug: moduleSlug, requirement, helper_id: helperId, max_attempts: 3 })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({ detail: res.statusText }));
+                    throw new Error(err.detail || '请求失败');
+                }
+                const data = await res.json();
+                applyGeneratedDraft(data);
+            } catch (e) {
+                try {
+                    setGeneratorMessage(`生成失败，正在自动回退：${e.message}`);
+                    const data = await generateSpiderFallback(moduleSlug, requirement, helperId);
+                    applyGeneratedDraft(data);
+                } catch (fallbackError) {
+                    setGeneratorMessage(`生成失败：${fallbackError.message}`, 'bad');
+                    generatedDraft = null;
+                }
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        async function refineSpider(btn) {
+            const feedback = document.getElementById('refine-input').value.trim();
+            if (!feedback) return;
+            if (!generatedDraft) {
+                setGeneratorMessage('请先生成代码。', 'bad');
+                return;
+            }
+            // 从 CodeMirror 实例读取当前编辑器内容（支持用户手动改动后的版本）
+            const spiderCode = spiderEditor.getValue();
+            const helperId = document.getElementById('helper-select').value;
+
+            appendConversation('user', feedback);
+            document.getElementById('refine-input').value = '';
+
+            const originalText = btn.innerText;
+            btn.innerText = '生成中...';
+            btn.disabled = true;
+
+            const statusBox = document.getElementById('generator-status');
+            statusBox.className = 'generator-status streaming';
+            statusBox.textContent = '';
+
+            try {
+                const res = await fetch('/api/generator/refine-stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        module_slug: generatedDraft.module_slug,
+                        spider_code: spiderCode,
+                        feedback,
+                        helper_id: helperId,
+                        history: conversationHistory.slice(0, -1) // 不含刚追加的 user 消息
+                    })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({ detail: res.statusText }));
+                    throw new Error(err.detail || '请求失败');
+                }
+
+                await parseSseStream(res.body, {
+                    onProgress: (d) => appendProgressLine(`[${d.elapsed}s] ${d.message}`),
+                    onResult: (data) => {
+                        spiderEditor.setValue(data.spider_code || '');
+                        setGeneratorMessage(data.summary || '已根据反馈重新生成 spider_code。', 'ok');
+                        appendConversation('assistant', data.summary || '已更新 spider 代码。');
+                    },
+                    onError: (d) => {
+                        setGeneratorMessage(`迭代失败：${d.message}`, 'bad');
+                        appendConversation('assistant', `迭代失败：${d.message}`);
+                    }
+                });
+            } catch (e) {
+                setGeneratorMessage(`迭代失败：${e.message}`, 'bad');
+                appendConversation('assistant', `迭代失败：${e.message}`);
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        async function previewSpider(btn) {
+            if (!generatedDraft) {
+                setGeneratorMessage('请先生成代码。', 'bad');
+                return;
+            }
+            const spiderCode = spiderEditor.getValue().trim();
+            if (!spiderCode) {
+                setGeneratorMessage('spider 代码为空。', 'bad');
+                return;
+            }
+
+            const originalText = btn.innerText;
+            btn.innerText = '运行中...';
+            btn.disabled = true;
+
+            try {
+                await runPreviewValidation(generatedDraft.module_slug, spiderCode);
+            } catch (e) {
+                document.getElementById('preview-result-content').innerHTML =
+                    `<div class="preview-error">${escapeHtml(e.message)}</div>`;
+                setGeneratorMessage(`预览失败：${e.message}`, 'bad');
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        function renderPreviewResults(data) {
+            const results = data.results || [];
+            const container = document.getElementById('preview-result-content');
+            if (results.length === 0) {
+                container.innerHTML = '<p style="color:var(--text-muted)">未抓取到任何数据，请检查 spider 代码。</p>';
+                return;
+            }
+            const keys = [...new Set(results.flatMap(r => Object.keys(r)))];
+            const rows = results.map(r =>
+                '<tr>' + keys.map(k => `<td title="${escapeHtml(String(r[k] ?? ''))}">${escapeHtml(String(r[k] ?? '').slice(0, 80))}</td>`).join('') + '</tr>'
+            ).join('');
+            container.innerHTML = `
+                <div class="preview-table-wrap">
+                    <table class="preview-table">
+                        <thead><tr>${keys.map(k => `<th>${escapeHtml(k)}</th>`).join('')}</tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>`;
+        }
+
+        async function runPreviewValidation(moduleSlug, spiderCode) {
+            document.getElementById('preview-result-panel').style.display = '';
+            document.getElementById('preview-result-content').innerHTML =
+                '<p style="color:var(--text-muted)">正在 worker 沙箱中验证抓取结果（最长约 120 秒）…</p>';
+
+            const startRes = await fetch('/api/generator/preview', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    module_slug: moduleSlug,
+                    spider_code: spiderCode
+                })
+            });
+            if (!startRes.ok) {
+                const err = await startRes.json().catch(() => ({ detail: startRes.statusText }));
+                throw new Error(err.detail || '触发预览失败');
+            }
+            const { run_id } = await startRes.json();
+
+            let done = false;
+            for (let i = 0; i < 60 && !done; i++) {
+                await sleep(2000);
+                const pollRes = await fetch(`/api/generator/preview/${run_id}`);
+                const pollData = await pollRes.json();
+
+                if (pollData.status === 'done') {
+                    done = true;
+                    renderPreviewResults(pollData);
+                    const count = Number(pollData.count || 0);
+                    if (count > 0) {
+                        setGeneratorMessage(`生成+验证完成，共抓取 ${count} 条，展示前 ${(pollData.results || []).length} 条。`, 'ok');
+                    } else {
+                        setGeneratorMessage('代码已生成，但预览抓取结果为 0 条，请调整规则后重试。', 'bad');
+                    }
+                } else if (pollData.status === 'error') {
+                    done = true;
+                    document.getElementById('preview-result-content').innerHTML =
+                        `<div class="preview-error">预览失败：${escapeHtml(pollData.message || '未知错误')}</div>`;
+                    setGeneratorMessage(`预览失败：${pollData.message || '未知错误'}`, 'bad');
+                }
+            }
+
+            if (!done) {
+                document.getElementById('preview-result-content').innerHTML =
+                    '<div class="preview-error">预览轮询超时，请稍后在 Prefect UI 查看 flow run 状态。</div>';
+                setGeneratorMessage('预览轮询超时，请稍后在 Prefect UI 查看 flow run 状态。', 'bad');
+            }
+        }
+
+        function appendConversation(role, content) {
+            conversationHistory.push({ role, content });
+            const hist = document.getElementById('conversation-history');
+            const bubble = document.createElement('div');
+            bubble.className = `chat-bubble ${role}`;
+            bubble.innerHTML = `<div class="role-label">${role === 'user' ? '👤 你' : '🤖 AI'}</div>${escapeHtml(content)}`;
+            hist.appendChild(bubble);
+            hist.scrollTop = hist.scrollHeight;
+        }
+
+        // 通用 SSE 流解析器
+        async function parseSseStream(body, { onProgress, onResult, onError }) {
+            const reader = body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let hasResult = false;
+            let hasError = false;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+
+                const events = buffer.split('\n\n');
+                buffer = events.pop() || '';
+
+                for (const block of events) {
+                    const trimmed = block.trim();
+                    if (!trimmed) continue;
+                    let eventType = null, dataStr = null;
+                    for (const line of trimmed.split('\n')) {
+                        if (line.startsWith('event:')) eventType = line.slice(6).trim();
+                        else if (line.startsWith('data:')) dataStr = line.slice(5).trim();
+                    }
+                    if (!eventType || !dataStr) continue;
+                    try {
+                        const d = JSON.parse(dataStr);
+                        if (eventType === 'progress') onProgress(d);
+                        else if (eventType === 'result') {
+                            hasResult = true;
+                            await onResult(d);
+                            try { await reader.cancel(); } catch (e) {}
+                            return { hasResult, hasError };
+                        } else if (eventType === 'error') {
+                            hasError = true;
+                            await onError(d);
+                            try { await reader.cancel(); } catch (e) {}
+                            return { hasResult, hasError };
+                        }
+                    } catch (e) {
+                        console.warn('SSE 解析失败', block, e);
+                    }
+                }
+            }
+            return { hasResult, hasError };
+        }
+
+        async function deployGeneratedSpider(btn) {
+            if (!generatedDraft) {
+                setGeneratorMessage('请先生成代码。', 'bad');
+                return;
+            }
+
+            const originalText = btn.innerText;
+            btn.innerText = '提交中...';
+            btn.disabled = true;
+            setGeneratorMessage('正在写入文件，并提交给 worker 侧部署注册器。');
+
+            try {
+                const res = await fetch('/api/generator/deploy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        module_slug: generatedDraft.module_slug,
+                        spider_path: generatedDraft.spider_path,
+                        deploy_path: generatedDraft.deploy_path,
+                        // 从 CodeMirror 实例读取用户可能已手动修改过的代码
+                        spider_code: spiderEditor.getValue(),
+                        deploy_code: deployEditor.getValue(),
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || '部署提交失败');
+                setGeneratorMessage(
+                    `${data.message}。worker 已收到 ${data.deploy_script} 的注册请求。`,
+                    'ok'
+                );
+            } catch (e) {
+                setGeneratorMessage(`部署提交失败：${e.message}`, 'bad');
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+        loadHelpers().then(() => initGeneratorStatus());
+    </script>
+</body>
+</html>

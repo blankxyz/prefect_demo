@@ -3,17 +3,21 @@ import os
 import re
 import subprocess
 import sys
+import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import AsyncIterator
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="爬虫大屏管控网关")
 
 PREFECT_API_URL = os.getenv("PREFECT_API_URL", "http://localhost:4200/api")
 RUNTIME_FLAGS_PATH = Path(os.getenv("RUNTIME_FLAGS_PATH", "/app/runtime/system_flags.json"))
+AI_HELPERS_PATH = Path(os.getenv("RUNTIME_FLAGS_PATH", "/app/runtime/system_flags.json")).parent / "ai_helpers.json"
 PROJECT_ROOT = Path(os.getenv("PROJECT_ROOT", "/workspace"))
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 AI_API_KEY = os.getenv("AI_API_KEY", "").strip()
@@ -60,6 +64,33 @@ GENERATOR_SYSTEM_PROMPT = """
 """.strip()
 
 
+REFINE_SYSTEM_PROMPT = """
+你是一个资深 Python 爬虫工程师。根据用户反馈，修改现有的 spider 代码。
+
+必须遵守：
+1. 只输出一个 JSON 对象，禁止 Markdown 代码块。
+2. JSON 字段仅允许：
+   - summary: string（说明本次修改了什么）
+   - spider_code: string（完整的修改后代码）
+3. 不要修改 deploy 文件，不要输出 deploy_code。
+4. 不要输出解释文本。
+""".strip()
+
+REFINE_OUTPUT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["summary", "spider_code"],
+    "properties": {
+        "summary": {"type": "string"},
+        "spider_code": {"type": "string"},
+    },
+}
+
+GEN_VALIDATE_MAX_ATTEMPTS = int(os.getenv("GEN_VALIDATE_MAX_ATTEMPTS", "3"))
+GEN_VALIDATE_TIMEOUT_SECONDS = int(os.getenv("GEN_VALIDATE_TIMEOUT_SECONDS", "120"))
+GEN_VALIDATE_POLL_SECONDS = float(os.getenv("GEN_VALIDATE_POLL_SECONDS", "2"))
+
+
 def _default_flags() -> dict:
     return {"enable_kafka": True}
 
@@ -98,15 +129,49 @@ def _slugify(value: str) -> str:
     return slug
 
 
+def _read_ai_helpers() -> list[dict]:
+    """读取 ai_helpers.json，不存在时从环境变量构建默认列表。"""
+    if AI_HELPERS_PATH.exists():
+        try:
+            data = json.loads(AI_HELPERS_PATH.read_text(encoding="utf-8"))
+            helpers = data.get("helpers") if isinstance(data, dict) else None
+            if isinstance(helpers, list) and helpers:
+                return helpers
+        except Exception:
+            pass
+
+    # 回退：从环境变量构建
+    fallback: list[dict] = []
+    if LOCAL_CODEX_HELPER_URL:
+        fallback.append({
+            "id": "codex",
+            "name": "本地 Codex Helper",
+            "type": "codex",
+            "url": LOCAL_CODEX_HELPER_URL,
+        })
+    if AI_API_KEY and AI_MODEL:
+        fallback.append({
+            "id": "remote_api",
+            "name": f"远程 API ({AI_MODEL})",
+            "type": "openai",
+            "base_url": AI_BASE_URL,
+            "api_key": AI_API_KEY,
+            "model": AI_MODEL,
+        })
+    return fallback
+
+
 def _generator_ready() -> dict:
+    helpers = _read_ai_helpers()
+    first = helpers[0] if helpers else {}
     return {
-        "enabled": bool(LOCAL_CODEX_HELPER_URL) or bool(AI_API_KEY and AI_MODEL),
+        "enabled": bool(helpers),
+        "helper_count": len(helpers),
         "project_root_exists": PROJECT_ROOT.exists(),
         "project_root": str(PROJECT_ROOT),
-        "model": AI_MODEL or None,
+        "model": first.get("model") or None,
         "manager_deployment": DEPLOYMENT_MANAGER_NAME,
-        "provider": "local_codex" if LOCAL_CODEX_HELPER_URL else "remote_api",
-        "helper_url": LOCAL_CODEX_HELPER_URL or None,
+        "provider": first.get("type") or None,
         "reference_files": [path for path, _ in REFERENCE_FILES],
     }
 
@@ -262,22 +327,129 @@ async def _find_deployment_id_by_name(client: httpx.AsyncClient, deployment_name
     return None
 
 
-async def _generate_code_via_ai(payload: dict) -> dict:
-    readiness = _generator_ready()
-    if not readiness["enabled"]:
-        raise HTTPException(status_code=503, detail="AI 生成功能未配置，请设置 LOCAL_CODEX_HELPER_URL 或 AI_API_KEY + AI_MODEL")
-    if not readiness["project_root_exists"]:
-        raise HTTPException(status_code=500, detail=f"项目目录不存在: {PROJECT_ROOT}")
+async def _start_preview_flow_run(
+    client: httpx.AsyncClient,
+    *,
+    module_slug: str,
+    spider_code: str,
+) -> str:
+    spider_file_path = _safe_relative_spider_path(f"spiders/{module_slug}_spider.py")
+    spider_file_path.parent.mkdir(parents=True, exist_ok=True)
+    spider_file_path.write_text(spider_code, encoding="utf-8")
 
-    raw_slug = str(payload.get("module_slug") or "")
-    module_slug = _slugify(raw_slug)
-    if not module_slug:
-        raise HTTPException(status_code=400, detail="module_slug 不能为空，且必须包含字母或数字")
+    preview_dep_id = await _find_deployment_id_by_name(client, "preview-runner")
+    if not preview_dep_id:
+        raise HTTPException(
+            status_code=503,
+            detail="未找到 preview-runner deployment，请先在 worker 内执行 python spiders/deploy_preview_runner.py",
+        )
 
-    requirement = str(payload.get("requirement") or "").strip()
-    if len(requirement) < 20:
-        raise HTTPException(status_code=400, detail="需求描述过短，请至少提供 20 个字符")
+    resp = await client.post(
+        f"{PREFECT_API_URL}/deployments/{preview_dep_id}/create_flow_run",
+        json={"parameters": {"module_slug": module_slug}},
+    )
+    if resp.status_code not in {200, 201}:
+        raise HTTPException(status_code=502, detail=f"触发预览失败: {resp.text}")
+    run_id = resp.json().get("id")
+    if not run_id:
+        raise HTTPException(status_code=502, detail="预览任务未返回 run_id")
+    return run_id
 
+
+async def _read_preview_flow_run(client: httpx.AsyncClient, run_id: str) -> dict:
+    resp = await client.get(f"{PREFECT_API_URL}/flow_runs/{run_id}")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"查询 flow run 失败: {resp.text}")
+
+    run_data = resp.json()
+    state_type = (run_data.get("state_type") or "").upper()
+
+    if state_type == "COMPLETED":
+        result_path = PROJECT_ROOT / "runtime" / f"preview_{run_id}.json"
+        if not result_path.exists():
+            return {"status": "done", "results": [], "count": 0, "warning": "结果文件不存在"}
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return {"status": "error", "message": f"读取结果文件失败: {exc}"}
+        return {"status": "done", **result}
+    if state_type in {"FAILED", "CRASHED", "CANCELLED"}:
+        message = (run_data.get("state") or {}).get("message") or state_type
+        return {"status": "error", "message": message}
+    return {"status": "running", "state": state_type}
+
+
+async def _wait_preview_result(
+    client: httpx.AsyncClient,
+    run_id: str,
+    *,
+    timeout_seconds: int = GEN_VALIDATE_TIMEOUT_SECONDS,
+    poll_seconds: float = GEN_VALIDATE_POLL_SECONDS,
+) -> dict:
+    start = datetime.now(timezone.utc)
+    while True:
+        result = await _read_preview_flow_run(client, run_id)
+        if result.get("status") in {"done", "error"}:
+            return result
+        if (datetime.now(timezone.utc) - start).total_seconds() > timeout_seconds:
+            return {"status": "error", "message": f"预览轮询超时（>{timeout_seconds}s）"}
+        await asyncio.sleep(poll_seconds)
+
+
+async def _call_codex_helper(helper: dict, system_prompt: str, user_prompt: str) -> dict:
+    url = str(helper.get("url") or "").rstrip("/")
+    if not url:
+        raise HTTPException(status_code=503, detail=f"Helper '{helper.get('name')}' 未配置 url")
+    # 本地 helper 需要较长的 read timeout（CLI 模型推理可能耗时数分钟）
+    timeout = httpx.Timeout(connect=10.0, read=600.0, write=30.0, pool=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(
+            f"{url}/generate",
+            json={"system_prompt": system_prompt, "user_prompt": user_prompt},
+        )
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Codex helper 调用失败: {response.text}")
+    return response.json()
+
+
+async def _call_openai_helper(helper: dict, system_prompt: str, user_prompt: str) -> dict:
+    base_url = str(helper.get("base_url") or "").rstrip("/")
+    api_key = str(helper.get("api_key") or "")
+    model = str(helper.get("model") or "")
+    if not base_url or not model:
+        raise HTTPException(status_code=503, detail=f"Helper '{helper.get('name')}' 未配置 base_url 或 model")
+
+    request_body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.2,
+    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    async with httpx.AsyncClient(timeout=AI_TIMEOUT) as client:
+        response = await client.post(
+            f"{base_url}/chat/completions",
+            headers=headers,
+            json=request_body,
+        )
+
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"OpenAI 接口调用失败: {response.text}")
+
+    try:
+        raw_text = response.json()["choices"][0]["message"]["content"]
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI 返回结构异常: {exc}") from exc
+    return _extract_json_object(raw_text)
+
+
+def _build_codegen_prompts(module_slug: str, requirement: str) -> tuple[str, str, dict]:
+    """构建代码生成的 system_prompt、user_prompt 和元数据。"""
     flow_var = f"{module_slug}_flow"
     deployment_name = f"{module_slug}-flow"
     spider_path = f"spiders/{module_slug}_spider.py"
@@ -308,46 +480,89 @@ Deployment 名称: {deployment_name}
         deployment_name=deployment_name,
     )
 
-    if LOCAL_CODEX_HELPER_URL:
-        async with httpx.AsyncClient(timeout=AI_TIMEOUT) as client:
-            response = await client.post(
-                f"{LOCAL_CODEX_HELPER_URL}/generate",
-                json={
-                    "system_prompt": system_prompt,
-                    "user_prompt": user_prompt,
-                },
-            )
-        if response.status_code >= 400:
-            raise HTTPException(status_code=502, detail=f"本地 Codex helper 调用失败: {response.text}")
-        generated = response.json()
-    else:
-        request_body = {
-            "model": AI_MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": 0.2,
-        }
+    meta = {
+        "module_slug": module_slug,
+        "spider_path": spider_path,
+        "deploy_path": deploy_path,
+        "flow_var": flow_var,
+        "deployment_name": deployment_name,
+    }
+    return system_prompt, user_prompt, meta
 
-        async with httpx.AsyncClient(timeout=AI_TIMEOUT) as client:
-            response = await client.post(
-                f"{AI_BASE_URL}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {AI_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=request_body,
-            )
 
-        if response.status_code >= 400:
-            raise HTTPException(status_code=502, detail=f"AI 接口调用失败: {response.text}")
+async def _proxy_codex_sse(
+    helper: dict,
+    system_prompt: str,
+    user_prompt: str,
+    output_schema: dict | None,
+    inject_fields: dict | None = None,
+) -> StreamingResponse:
+    """代理 codex helper 的 SSE 流，可选在 result 事件中注入额外字段。"""
+    url = str(helper.get("url") or "").rstrip("/")
+    if not url:
+        raise HTTPException(status_code=503, detail=f"Helper '{helper.get('name')}' 未配置 url")
 
+    request_body: dict = {"system_prompt": system_prompt, "user_prompt": user_prompt}
+    if output_schema:
+        request_body["output_schema"] = output_schema
+
+    async def _event_generator() -> AsyncIterator[str]:
+        timeout = httpx.Timeout(connect=10.0, read=600.0, write=30.0, pool=5.0)
         try:
-            raw_text = response.json()["choices"][0]["message"]["content"]
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("POST", f"{url}/generate-stream", json=request_body) as response:
+                    buffer = ""
+                    async for chunk in response.aiter_text():
+                        buffer += chunk
+                        while "\n\n" in buffer:
+                            block, buffer = buffer.split("\n\n", 1)
+                            block = block.strip()
+                            if not block:
+                                continue
+                            event_type: str | None = None
+                            data_str: str | None = None
+                            for line in block.split("\n"):
+                                if line.startswith("event:"):
+                                    event_type = line[6:].strip()
+                                elif line.startswith("data:"):
+                                    data_str = line[5:].strip()
+                            if event_type == "result" and data_str and inject_fields:
+                                try:
+                                    data = json.loads(data_str)
+                                    data.update(inject_fields)
+                                    yield f"event: result\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+                                    continue
+                                except Exception:
+                                    pass
+                            yield f"{block}\n\n"
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"AI 返回结构异常: {exc}") from exc
-        generated = _extract_json_object(raw_text)
+            yield f"event: error\ndata: {json.dumps({'message': str(exc)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(_event_generator(), media_type="text/event-stream")
+
+
+async def _generate_code_via_helper(helper: dict, payload: dict) -> dict:
+    if not PROJECT_ROOT.exists():
+        raise HTTPException(status_code=500, detail=f"项目目录不存在: {PROJECT_ROOT}")
+
+    raw_slug = str(payload.get("module_slug") or "")
+    module_slug = _slugify(raw_slug)
+    if not module_slug:
+        raise HTTPException(status_code=400, detail="module_slug 不能为空，且必须包含字母或数字")
+
+    requirement = str(payload.get("requirement") or "").strip()
+    if len(requirement) < 20:
+        raise HTTPException(status_code=400, detail="需求描述过短，请至少提供 20 个字符")
+
+    system_prompt, user_prompt, meta = _build_codegen_prompts(module_slug, requirement)
+
+    helper_type = str(helper.get("type") or "")
+    if helper_type == "codex":
+        generated = await _call_codex_helper(helper, system_prompt, user_prompt)
+    elif helper_type == "openai":
+        generated = await _call_openai_helper(helper, system_prompt, user_prompt)
+    else:
+        raise HTTPException(status_code=400, detail=f"未知 helper type: {helper_type}")
 
     spider_code = str(generated.get("spider_code") or "").strip()
     deploy_code = str(generated.get("deploy_code") or "").strip()
@@ -355,12 +570,8 @@ Deployment 名称: {deployment_name}
         raise HTTPException(status_code=502, detail="AI 未返回完整代码")
 
     return {
-        "module_slug": module_slug,
+        **meta,
         "summary": str(generated.get("summary") or "").strip(),
-        "spider_path": spider_path,
-        "deploy_path": deploy_path,
-        "flow_var": flow_var,
-        "deployment_name": deployment_name,
         "spider_code": spider_code + "\n",
         "deploy_code": deploy_code + "\n",
     }
@@ -452,9 +663,119 @@ async def update_kafka_setting(payload: dict):
     return {"message": "Kafka 开关已更新", "settings": flags}
 
 
+@app.get("/api/generator/helpers")
+async def list_ai_helpers():
+    helpers = _read_ai_helpers()
+    safe = []
+    for h in helpers:
+        entry = {k: v for k, v in h.items() if k != "api_key"}
+        if "api_key" in h:
+            entry["api_key_set"] = bool(h["api_key"])
+        safe.append(entry)
+    return {"helpers": safe}
+
+
 @app.post("/api/generator/generate")
 async def generate_spider_code(payload: dict):
-    return await _generate_code_via_ai(payload)
+    helpers = _read_ai_helpers()
+    if not helpers:
+        raise HTTPException(status_code=503, detail="AI 生成功能未配置，请检查 runtime/ai_helpers.json 或环境变量")
+
+    helper_id = str(payload.get("helper_id") or "").strip()
+    if helper_id:
+        helper = next((h for h in helpers if h.get("id") == helper_id), None)
+        if not helper:
+            raise HTTPException(status_code=400, detail=f"未找到 helper_id: {helper_id}")
+    else:
+        helper = helpers[0]
+
+    return await _generate_code_via_helper(helper, payload)
+
+
+@app.post("/api/generator/generate-validated")
+async def generate_spider_code_with_validation(payload: dict):
+    helpers = _read_ai_helpers()
+    if not helpers:
+        raise HTTPException(status_code=503, detail="AI 生成功能未配置，请检查 runtime/ai_helpers.json 或环境变量")
+
+    helper_id = str(payload.get("helper_id") or "").strip()
+    if helper_id:
+        helper = next((h for h in helpers if h.get("id") == helper_id), None)
+        if not helper:
+            raise HTTPException(status_code=400, detail=f"未找到 helper_id: {helper_id}")
+    else:
+        helper = helpers[0]
+
+    max_attempts = int(payload.get("max_attempts") or GEN_VALIDATE_MAX_ATTEMPTS)
+    if max_attempts < 1:
+        max_attempts = 1
+    if max_attempts > 5:
+        max_attempts = 5
+
+    module_slug = _slugify(str(payload.get("module_slug") or ""))
+    requirement = str(payload.get("requirement") or "").strip()
+    if not module_slug:
+        raise HTTPException(status_code=400, detail="module_slug 不能为空，且必须包含字母或数字")
+    if len(requirement) < 20:
+        raise HTTPException(status_code=400, detail="需求描述过短，请至少提供 20 个字符")
+
+    last_generated: dict | None = None
+    last_preview: dict | None = None
+    feedback: str | None = None
+
+    async with httpx.AsyncClient() as client:
+        for attempt in range(1, max_attempts + 1):
+            effective_requirement = requirement
+            if feedback:
+                effective_requirement = (
+                    f"{requirement}\n\n"
+                    f"【上一次自动验证失败反馈】\n{feedback}\n"
+                    "请据此修正抓取规则，确保预览能抓到正文数据。"
+                )
+
+            generated = await _generate_code_via_helper(
+                helper,
+                {"module_slug": module_slug, "requirement": effective_requirement},
+            )
+            last_generated = generated
+
+            run_id = await _start_preview_flow_run(
+                client,
+                module_slug=module_slug,
+                spider_code=generated["spider_code"],
+            )
+            preview_result = await _wait_preview_result(
+                client,
+                run_id,
+                timeout_seconds=GEN_VALIDATE_TIMEOUT_SECONDS,
+                poll_seconds=GEN_VALIDATE_POLL_SECONDS,
+            )
+            last_preview = {"run_id": run_id, **preview_result}
+
+            if preview_result.get("status") == "done" and int(preview_result.get("count") or 0) > 0:
+                return {
+                    **generated,
+                    "validated": True,
+                    "attempt": attempt,
+                    "max_attempts": max_attempts,
+                    "preview": last_preview,
+                }
+
+            if preview_result.get("status") == "done":
+                feedback = "预览抓取结果为 0 条。"
+            else:
+                feedback = str(preview_result.get("message") or "预览运行失败")
+
+    if not last_generated:
+        raise HTTPException(status_code=502, detail="生成失败，未产出代码")
+
+    return {
+        **last_generated,
+        "validated": False,
+        "attempt": max_attempts,
+        "max_attempts": max_attempts,
+        "preview": last_preview or {"status": "error", "message": "未获得预览结果"},
+    }
 
 
 @app.post("/api/generator/deploy")
@@ -525,6 +846,86 @@ async def redeploy_existing(deployment_name: str):
         "deploy_script": deploy_script,
         "flow_run": resp.json(),
     }
+
+
+@app.post("/api/generator/generate-stream")
+async def generate_spider_stream(payload: dict):
+    helpers = _read_ai_helpers()
+    if not helpers:
+        raise HTTPException(status_code=503, detail="AI 生成功能未配置，请检查 runtime/ai_helpers.json 或环境变量")
+
+    helper_id = str(payload.get("helper_id") or "").strip()
+    if helper_id:
+        helper = next((h for h in helpers if h.get("id") == helper_id), helpers[0])
+    else:
+        helper = helpers[0]
+
+    if str(helper.get("type") or "") != "codex":
+        raise HTTPException(status_code=400, detail="SSE 流式生成仅支持 codex 类型 helper，请使用 /api/generator/generate")
+
+    raw_slug = str(payload.get("module_slug") or "")
+    module_slug = _slugify(raw_slug)
+    if not module_slug:
+        raise HTTPException(status_code=400, detail="module_slug 不能为空，且必须包含字母或数字")
+
+    requirement = str(payload.get("requirement") or "").strip()
+    if len(requirement) < 20:
+        raise HTTPException(status_code=400, detail="需求描述过短，请至少提供 20 个字符")
+
+    system_prompt, user_prompt, inject_fields = _build_codegen_prompts(module_slug, requirement)
+    return await _proxy_codex_sse(helper, system_prompt, user_prompt, None, inject_fields)
+
+
+@app.post("/api/generator/refine-stream")
+async def refine_spider_stream(payload: dict):
+    helpers = _read_ai_helpers()
+    if not helpers:
+        raise HTTPException(status_code=503, detail="AI 生成功能未配置")
+
+    helper_id = str(payload.get("helper_id") or "").strip()
+    if helper_id:
+        helper = next((h for h in helpers if h.get("id") == helper_id), helpers[0])
+    else:
+        helper = helpers[0]
+
+    if str(helper.get("type") or "") != "codex":
+        raise HTTPException(status_code=400, detail="SSE 流式生成仅支持 codex 类型 helper")
+
+    spider_code = str(payload.get("spider_code") or "").strip()
+    feedback = str(payload.get("feedback") or "").strip()
+    if not spider_code or not feedback:
+        raise HTTPException(status_code=400, detail="缺少 spider_code 或 feedback")
+
+    history: list[dict] = payload.get("history") or []
+    history_lines: list[str] = []
+    for msg in history:
+        role_label = "用户" if msg.get("role") == "user" else "AI"
+        history_lines.append(f"{role_label}: {msg.get('content', '')}")
+    history_block = ("\n历史对话：\n" + "\n".join(history_lines) + "\n") if history_lines else ""
+
+    user_prompt = f"当前 spider 代码：\n```python\n{spider_code}\n```\n{history_block}\n用户新反馈：{feedback}"
+    return await _proxy_codex_sse(helper, REFINE_SYSTEM_PROMPT, user_prompt, REFINE_OUTPUT_SCHEMA, None)
+
+
+@app.post("/api/generator/preview")
+async def start_preview(payload: dict):
+    module_slug = _slugify(str(payload.get("module_slug") or ""))
+    if not module_slug:
+        raise HTTPException(status_code=400, detail="module_slug 无效")
+
+    spider_code = str(payload.get("spider_code") or "").strip()
+    if not spider_code:
+        raise HTTPException(status_code=400, detail="缺少 spider_code")
+
+    async with httpx.AsyncClient() as client:
+        run_id = await _start_preview_flow_run(client, module_slug=module_slug, spider_code=spider_code)
+    return {"run_id": run_id}
+
+
+@app.get("/api/generator/preview/{run_id}")
+async def poll_preview(run_id: str):
+    async with httpx.AsyncClient() as client:
+        return await _read_preview_flow_run(client, run_id)
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
