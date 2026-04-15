@@ -13,5 +13,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN playwright install chromium firefox --with-deps || true
 RUN python -m camoufox fetch || true
 
+# 复制项目代码（用于 worker 启动时引导注册）
+COPY . /app
+
 # 为了方便在 docker 里直接能访问到包，设置 PYTHONPATH
 ENV PYTHONPATH=/app

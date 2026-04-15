@@ -74,6 +74,7 @@ services:
     command: >
       bash -c "
       prefect work-pool create --type process docker-crawler-pool || true;
+      python spiders/deploy_platform_ops.py;
       prefect worker start --pool 'docker-crawler-pool' --type process
       "
     environment:
@@ -81,8 +82,6 @@ services:
       CLICKHOUSE_HOST: clickhouse
       ENABLE_KAFKA: "false"
       GIT_REPO_URL: ${GIT_REPO_URL:-https://github.com/blankxyz/prefect_demo.git}
-    volumes:
-      - ./:/app
     depends_on:
       prefect-server:
         condition: service_healthy
