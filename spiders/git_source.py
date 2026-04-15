@@ -6,5 +6,5 @@ from prefect.runner.storage import GitRepository
 
 
 def get_git_source(branch: str = "main") -> GitRepository:
-    repo_url = os.getenv("GIT_REPO_URL", "https://github.com/<org>/<repo>.git")
+    repo_url = os.getenv("GIT_REPO_URL", "https://github.com/blankxyz/prefect_demo.git")
     return GitRepository(url=repo_url, branch=branch)
