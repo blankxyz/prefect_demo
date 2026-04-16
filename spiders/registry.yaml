@@ -1,0 +1,67 @@
+# 爬虫声明式注册表
+# sync_registry flow 每30分钟轮询此文件，自动同步 deployments 到 Prefect
+version: 1
+defaults:
+  work_pool: docker-crawler-pool
+  git_branch: main
+
+spiders:
+  - entrypoint: spiders/gdj_henan_tz_spider.py:gdj_henan_tz_flow
+    name: gdj-henan-tz-flow
+    interval: 86400
+    description: 河南省广播电视局通知公告详情抓取
+    tags: [gdj, henan, tzgg]
+
+  - entrypoint: spiders/gdj_video_spider.py:gdj_video_flow
+    name: gdj-video-flow
+    interval: 604800
+    description: 甘肃广电局陇上精品视频抓取
+    tags: [gdj, crawl4ai, video]
+
+  - entrypoint: spiders/gdj_xydt_spider.py:gdj_xydt_flow
+    name: gdj-xydt-flow
+    interval: 86400
+    description: 辽宁省广播电视局行业动态详情抓取
+    tags: [gdj, liaoning, xydt]
+
+  - entrypoint: spiders/nrta_activity_spider.py:nrta_activity_flow
+    name: nrta-activity-flow
+    interval: 86400
+    description: 国家广播电视总局工作动态抓取
+    tags: [nrta, activity, daily]
+
+  - entrypoint: spiders/nrta_headline_spider.py:nrta_headline_flow
+    name: nrta-headline-flow
+    interval: 86400
+    description: 国家广播电视总局总局要闻抓取
+    tags: [nrta, headline, daily]
+
+  - entrypoint: spiders/nrta_notice_spider.py:nrta_notice_flow
+    name: nrta-notice-flow
+    interval: 86400
+    description: 国家广播电视总局公告公示抓取
+    tags: [nrta, notice, daily]
+
+  - entrypoint: spiders/rta_hebei_sjyw_spider.py:rta_hebei_sjyw_flow
+    name: rta-hebei-sjyw-flow
+    interval: 86400
+    description: 河北省广播电视局省局要闻抓取
+    tags: [hebei, rta, sjyw, daily]
+
+  - entrypoint: spiders/hinews_shixian_all_spider.py:hinews_shixian_all_flow
+    name: hinews-shixian-all-flow
+    interval: 86400
+    description: 海南新闻市县频道抓取
+    tags: [hinews, shixian]
+
+# 平台工具 flow（无调度，按需触发）
+platform:
+  - entrypoint: spiders/platform_ops.py:register_spider_from_git
+    name: platform-register-from-git
+    description: 平台运维：通过参数从 git 注册爬虫部署（推荐）
+    tags: [platform, ops, deploy, git]
+
+  - entrypoint: spiders/preview_runner.py:preview_runner_flow
+    name: preview-runner
+    description: 爬虫代码预览沙箱，拦截数据写入并返回前 5 条结果
+    tags: [preview, sandbox]
