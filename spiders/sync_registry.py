@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 import tempfile
 from datetime import timedelta
@@ -30,8 +31,7 @@ SHA_VARIABLE = "registry_last_sha"
 def fetch_registry_from_git(git_branch: str = "main") -> dict[str, Any]:
     """从 Git 仓库克隆并读取 registry.yaml，返回解析内容和 commit SHA。"""
     logger = get_run_logger()
-    source = get_git_source(branch=git_branch)
-    repo_url = source.url
+    repo_url = os.getenv("GIT_REPO_URL", "https://github.com/blankxyz/prefect_demo.git")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         subprocess.run(
