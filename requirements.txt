@@ -1,4 +1,4 @@
 prefect>=3.0.0
-scrapling[all]
+scrapling[fetchers]
 clickhouse-connect
 kafka-python

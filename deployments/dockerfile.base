@@ -1,0 +1,25 @@
+FROM python:3.12-slim AS builder
+
+RUN apt-get update && apt-get install -y gcc libpq-dev git && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt /app/
+RUN pip install --no-cache-dir -r requirements.txt
+
+# --- final stage ---
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed Python packages from builder
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+WORKDIR /app
+
+# Install only chromium browser + OS deps
+RUN playwright install chromium --with-deps \
+    && rm -rf /root/.cache/ms-playwright/chromium_headless_shell-* \
+    && rm -rf /root/.cache/ms-playwright/ffmpeg-*

@@ -27,6 +27,8 @@ traceback.log
 
 # IDE
 .vscode/
+.claude/
+.codex
 .idea/
 *.swp
 *.swo
@@ -34,6 +36,7 @@ traceback.log
 # OS
 .DS_Store
 Thumbs.db
+*:Zone.Identifier
 
 # Runtime data
 result.json
