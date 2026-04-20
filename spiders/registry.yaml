@@ -54,6 +54,12 @@ spiders:
     description: 海南新闻市县频道抓取
     tags: [hinews, shixian]
 
+  - entrypoint: spiders/gdj_gansu_gov_cn_c109210_spider.py:gdj_gansu_gov_cn_c109210_flow
+    name: gdj-gansu-c109210-flow
+    interval: 86400
+    description: 甘肃省广电局本局消息第一页抓取
+    tags: [gdj, gansu, c109210, daily]
+
 # 平台工具 flow（无调度，按需触发）
 platform:
   - entrypoint: spiders/platform_ops.py:register_spider_from_git
