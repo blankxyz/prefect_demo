@@ -237,7 +237,7 @@ async def pause_removed_deployments(
 
 
 @flow(name="平台运维_同步爬虫注册表", log_prints=True, retries=1, retry_delay_seconds=60)
-def sync_spider_registry(git_branch: str = "main") -> dict[str, Any]:
+async def sync_spider_registry(git_branch: str = "main") -> dict[str, Any]:
     """轮询 Git registry.yaml，自动同步 deployments。"""
     logger = get_run_logger()
 
