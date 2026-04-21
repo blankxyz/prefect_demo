@@ -22,6 +22,7 @@ import yaml
 from prefect import Flow, flow, get_run_logger, task
 from prefect.client.orchestration import get_client
 from prefect.client.schemas.schedules import IntervalSchedule
+from prefect.utilities.asyncutils import run_coro_as_sync
 from prefect.variables import Variable
 
 from git_source import get_git_source
@@ -170,15 +171,17 @@ def _compute_deployment_hash(dep: dict[str, Any]) -> str:
 
 
 @task
-async def get_existing_sync_deployments(work_pool: str = "docker-crawler-pool") -> dict[str, Any]:
+def get_existing_sync_deployments() -> dict[str, Any]:
     """获取 Prefect 中所有带 managed-by:sync 标签的 deployments。"""
     logger = get_run_logger()
-    async with get_client() as client:
-        deployments = await client.read_deployments(
-            deployment_filter={
-                "tags": {"all_": [SYNC_TAG]},
-            }
-        )
+
+    async def _fetch():
+        async with get_client() as client:
+            return await client.read_deployments(
+                deployment_filter={"tags": {"all_": [SYNC_TAG]}}
+            )
+
+    deployments = run_coro_as_sync(_fetch())
     result = {d.name: d for d in deployments}
     logger.info("Prefect 中已有 %d 个 sync-managed deployments", len(result))
     return result
@@ -218,26 +221,29 @@ def upsert_deployment(dep: dict[str, Any]) -> str:
 
 
 @task
-async def pause_removed_deployments(
+def pause_removed_deployments(
     existing: dict[str, Any],
     desired_names: set[str],
 ) -> list[str]:
     """暂停不在 registry 中但带 sync 标签的 deployments。"""
     logger = get_run_logger()
-    paused: list[str] = []
+    to_pause = [name for name in existing if name not in desired_names]
 
-    async with get_client() as client:
-        for name, deployment in existing.items():
-            if name not in desired_names:
-                await client.set_deployment_paused_state(deployment.id, True)
-                logger.warning("已暂停 deployment: %s (不在 registry 中)", name)
-                paused.append(name)
+    async def _pause():
+        async with get_client() as client:
+            for name in to_pause:
+                await client.set_deployment_paused_state(existing[name].id, True)
 
-    return paused
+    if to_pause:
+        run_coro_as_sync(_pause())
+        for name in to_pause:
+            logger.warning("已暂停 deployment: %s (不在 registry 中)", name)
+
+    return to_pause
 
 
 @flow(name="平台运维_同步爬虫注册表", log_prints=True, retries=1, retry_delay_seconds=60)
-async def sync_spider_registry(git_branch: str = "main") -> dict[str, Any]:
+def sync_spider_registry(git_branch: str = "main") -> dict[str, Any]:
     """轮询 Git registry.yaml，自动同步 deployments。"""
     logger = get_run_logger()
 
