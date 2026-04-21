@@ -40,7 +40,7 @@ except ImportError:  # pragma: no cover - fallback for local/dev environments
 
 from common.clickhouse_sink import filter_new_items_by_url
 from common.result_sink import save_items_to_sinks
-
+# 15_STWZ_GANSUSHENGGUANGBODIANSHIJU_00_620000
 ACCOUNT_CODE = "15_STWZ_GANSUGOVCN_00_620000"
 BASE_URL = "https://gdj.gansu.gov.cn"
 SITE_NAME = "甘肃省广播电视局"
