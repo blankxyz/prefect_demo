@@ -21,6 +21,7 @@ import json
 import yaml
 from prefect import Flow, flow, get_run_logger, task
 from prefect.client.orchestration import get_client
+from prefect.client.schemas.filters import DeploymentFilter, DeploymentFilterTags
 from prefect.client.schemas.schedules import IntervalSchedule
 from prefect.utilities.asyncutils import run_coro_as_sync
 from prefect.variables import Variable
@@ -178,7 +179,9 @@ def get_existing_sync_deployments() -> dict[str, Any]:
     async def _fetch():
         async with get_client() as client:
             return await client.read_deployments(
-                deployment_filter={"tags": {"all_": [SYNC_TAG]}}
+                deployment_filter=DeploymentFilter(
+                    tags=DeploymentFilterTags(all_=[SYNC_TAG])
+                )
             )
 
     deployments = run_coro_as_sync(_fetch())
