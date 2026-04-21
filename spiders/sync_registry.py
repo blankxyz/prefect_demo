@@ -12,14 +12,14 @@ import hashlib
 import os
 import subprocess
 import tempfile
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import json
 
 import yaml
-from prefect import flow, get_run_logger, task
+from prefect import Flow, flow, get_run_logger, task
 from prefect.client.orchestration import get_client
 from prefect.variables import Variable
 
@@ -28,7 +28,7 @@ from git_source import get_git_source
 SYNC_TAG = "managed-by:sync"
 SHA_VARIABLE = "registry_last_sha"
 HASHES_VARIABLE = "registry_deployment_hashes"
-HASH_FIELDS = ("entrypoint", "work_pool", "git_branch", "description", "tags", "interval_seconds", "cron")
+HASH_FIELDS = ("entrypoint", "work_pool", "git_branch", "description", "tags", "interval_seconds", "cron", "anchor_time")
 
 
 @task
@@ -138,6 +138,9 @@ def _build_desired_deployments(registry: dict[str, Any]) -> list[dict[str, Any]]
         elif "cron" in spider:
             dep["cron"] = spider["cron"]
 
+        if "anchor_time" in spider:
+            dep["anchor_time"] = spider["anchor_time"]
+
         deployments.append(dep)
 
     # platform flow（无调度）
@@ -189,10 +192,11 @@ def upsert_deployment(dep: dict[str, Any]) -> str:
     schedule_kwargs: dict[str, Any] = {}
     if "interval_seconds" in dep:
         schedule_kwargs["interval"] = timedelta(seconds=dep["interval_seconds"])
+        if "anchor_time" in dep:
+            hour, minute = (int(x) for x in dep["anchor_time"].split(":"))
+            schedule_kwargs["anchor_date"] = datetime(2024, 1, 1, hour, minute, tzinfo=timezone.utc)
     elif "cron" in dep:
         schedule_kwargs["cron"] = dep["cron"]
-
-    from prefect import Flow
 
     deployment_id = Flow.from_source(
         source=source,

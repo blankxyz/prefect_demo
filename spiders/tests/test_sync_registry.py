@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,6 +9,7 @@ from sync_registry import (
     _compute_deployment_hash,
     load_deployment_hashes,
     save_deployment_hashes,
+    upsert_deployment,
 )
 
 BASE_DEP = {
@@ -131,6 +133,42 @@ def test_upsert_only_changed_deployments():
     assert upsert_mock.call_count == 1
     assert new_hashes["spider-b"] == _compute_deployment_hash(dep_changed)
     assert new_hashes["spider-a"] == existing_hashes["spider-a"]
+
+
+def test_hash_sensitive_to_anchor_time():
+    dep_without = {**BASE_DEP, "interval_seconds": 86400}
+    dep_with = {**dep_without, "anchor_time": "08:00"}
+    assert _compute_deployment_hash(dep_without) != _compute_deployment_hash(dep_with)
+
+
+def test_hash_anchor_time_value_matters():
+    base = {**BASE_DEP, "interval_seconds": 86400}
+    dep_08 = {**base, "anchor_time": "08:00"}
+    dep_10 = {**base, "anchor_time": "10:00"}
+    assert _compute_deployment_hash(dep_08) != _compute_deployment_hash(dep_10)
+
+
+def test_upsert_deployment_passes_anchor_date():
+    dep = {
+        "name": "test-flow",
+        "entrypoint": "spiders/test.py:test_flow",
+        "work_pool": "docker-crawler-pool",
+        "git_branch": "main",
+        "description": "",
+        "tags": ["managed-by:sync"],
+        "interval_seconds": 86400,
+        "anchor_time": "08:00",
+    }
+    mock_flow = MagicMock()
+    mock_flow.from_source.return_value.deploy.return_value = "fake-id"
+
+    with patch("sync_registry.get_git_source"), \
+         patch("sync_registry.get_run_logger", return_value=MagicMock()), \
+         patch("sync_registry.Flow", mock_flow):
+        upsert_deployment.fn(dep)
+
+    _, call_kwargs = mock_flow.from_source.return_value.deploy.call_args
+    assert call_kwargs["anchor_date"] == datetime(2024, 1, 1, 8, 0, tzinfo=timezone.utc)
 
 
 def test_paused_deployments_removed_from_hashes():
