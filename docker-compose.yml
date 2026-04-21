@@ -45,10 +45,20 @@ services:
   prefect-server:
     image: prefecthq/prefect:3-latest
     restart: always
-    command: prefect server start --host 0.0.0.0
+    command: >
+      bash -c "
+      prefect server start --host 0.0.0.0 &
+      SERVER_PID=$$!;
+      until python -c \"import httpx; httpx.get('http://localhost:4200/api/health').raise_for_status()\" 2>/dev/null; do sleep 2; done;
+      prefect work-pool create --type process platform-pool || true;
+      prefect worker start --pool 'platform-pool' --type process &
+      wait $$SERVER_PID
+      "
     environment:
       PREFECT_SERVER_TELEMETRY_ENABLED: "false"
       PREFECT_API_DATABASE_CONNECTION_URL: "postgresql+asyncpg://prefect:prefect@postgres:5432/prefect"
+      PREFECT_API_URL: "http://localhost:4200/api"
+      GIT_REPO_URL: ${GIT_REPO_URL:-https://github.com/blankxyz/prefect_demo.git}
     ports:
       - "4200:4200"
     healthcheck:

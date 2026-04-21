@@ -22,7 +22,7 @@ if __name__ == "__main__":
         entrypoint="spiders/sync_registry.py:sync_spider_registry",
     ).deploy(
         name="sync-spider-registry",
-        work_pool_name="docker-crawler-pool",
+        work_pool_name="platform-pool",
         interval=timedelta(minutes=30),
         description="每30分钟轮询 Git registry.yaml，自动同步爬虫部署",
         tags=["platform", "sync"],
