@@ -16,6 +16,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import json
+
 import yaml
 from prefect import flow, get_run_logger, task
 from prefect.client.orchestration import get_client
@@ -25,6 +27,8 @@ from git_source import get_git_source
 
 SYNC_TAG = "managed-by:sync"
 SHA_VARIABLE = "registry_last_sha"
+HASHES_VARIABLE = "registry_deployment_hashes"
+HASH_FIELDS = ("entrypoint", "work_pool", "git_branch", "description", "tags", "interval_seconds", "cron")
 
 
 @task
@@ -87,6 +91,27 @@ def save_sha(content_sha: str) -> None:
     Variable.set(SHA_VARIABLE, content_sha, overwrite=True)
 
 
+@task
+def load_deployment_hashes() -> dict[str, str]:
+    """从 Prefect Variable 加载 deployment hashes，首次运行返回空 dict。"""
+    logger = get_run_logger()
+    raw = Variable.get(HASHES_VARIABLE, default=None)
+    if raw is None:
+        logger.info("未找到 %s，视为首次运行", HASHES_VARIABLE)
+        return {}
+    result: dict[str, str] = json.loads(raw)
+    logger.info("已加载 %d 个 deployment hashes", len(result))
+    return result
+
+
+@task
+def save_deployment_hashes(hashes: dict[str, str]) -> None:
+    """保存 deployment hashes dict 到 Prefect Variable。"""
+    logger = get_run_logger()
+    Variable.set(HASHES_VARIABLE, json.dumps(hashes, ensure_ascii=False), overwrite=True)
+    logger.info("已保存 %d 个 deployment hashes", len(hashes))
+
+
 def _build_desired_deployments(registry: dict[str, Any]) -> list[dict[str, Any]]:
     """从 registry 配置构建期望的 deployment 列表。"""
     defaults = registry.get("defaults", {})
@@ -129,6 +154,15 @@ def _build_desired_deployments(registry: dict[str, Any]) -> list[dict[str, Any]]
         })
 
     return deployments
+
+
+def _compute_deployment_hash(dep: dict[str, Any]) -> str:
+    """计算 deployment 配置的稳定哈希（不含 name 字段），用于变更检测。"""
+    payload = {k: dep[k] for k in HASH_FIELDS if k in dep}
+    if "tags" in payload:
+        payload = {**payload, "tags": sorted(payload["tags"])}
+    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonical.encode()).hexdigest()[:12]
 
 
 @task
@@ -213,25 +247,43 @@ def sync_spider_registry(git_branch: str = "main") -> dict[str, Any]:
     desired_names = {d["name"] for d in desired}
     logger.info("registry 中声明了 %d 个 deployments", len(desired))
 
-    # 4. 获取当前 sync-managed deployments
+    # 4. 获取当前 sync-managed deployments（用于暂停检测）
     existing = get_existing_sync_deployments()
 
-    # 5. 注册/更新所有 deployments
+    # 5. 加载 per-deployment hashes，只 upsert 有变更的
+    current_hashes = load_deployment_hashes()
+    new_hashes = dict(current_hashes)
+
     upserted: list[str] = []
+    skipped: list[str] = []
+
     for dep in desired:
-        dep_id = upsert_deployment(dep)
-        upserted.append(dep["name"])
+        name = dep["name"]
+        new_hash = _compute_deployment_hash(dep)
+        if current_hashes.get(name) == new_hash:
+            skipped.append(name)
+            logger.debug("跳过未变更的 deployment: %s (hash=%s)", name, new_hash)
+            continue
+        upsert_deployment(dep)
+        new_hashes[name] = new_hash
+        upserted.append(name)
 
     # 6. 暂停已移除的 deployments
     paused = pause_removed_deployments(existing, desired_names)
 
-    # 7. 保存 SHA
+    # 7. 清除已暂停 deployment 的 hash（重新加回时应触发 upsert）
+    for name in paused:
+        new_hashes.pop(name, None)
+
+    # 8. 保存 hashes 和文件级 SHA
+    save_deployment_hashes(new_hashes)
     save_sha(content_sha)
 
     summary = {
         "status": "synced",
         "sha": content_sha,
         "upserted": upserted,
+        "skipped": skipped,
         "paused": paused,
     }
     logger.info("同步完成: %s", summary)
