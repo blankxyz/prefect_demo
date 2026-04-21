@@ -84,7 +84,6 @@ services:
     command: >
       bash -c "
       prefect work-pool create --type process docker-crawler-pool || true;
-      python spiders/deploy_platform_ops.py;
       prefect worker start --pool 'docker-crawler-pool' --type process
       "
     environment:
