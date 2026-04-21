@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -168,7 +168,14 @@ def test_upsert_deployment_passes_anchor_date():
         upsert_deployment.fn(dep)
 
     _, call_kwargs = mock_flow.from_source.return_value.deploy.call_args
-    assert call_kwargs["anchor_date"] == datetime(2024, 1, 1, 8, 0, tzinfo=timezone.utc)
+    from prefect.client.schemas.schedules import IntervalSchedule
+    expected_schedule = IntervalSchedule(
+        interval=timedelta(seconds=86400),
+        anchor_date=datetime(2024, 1, 1, 8, 0, tzinfo=timezone.utc),
+    )
+    assert call_kwargs["schedule"] == expected_schedule
+    assert "anchor_date" not in call_kwargs
+    assert "interval" not in call_kwargs
 
 
 def test_paused_deployments_removed_from_hashes():

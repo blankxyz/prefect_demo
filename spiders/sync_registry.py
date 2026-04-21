@@ -21,6 +21,7 @@ import json
 import yaml
 from prefect import Flow, flow, get_run_logger, task
 from prefect.client.orchestration import get_client
+from prefect.client.schemas.schedules import IntervalSchedule
 from prefect.variables import Variable
 
 from git_source import get_git_source
@@ -191,10 +192,13 @@ def upsert_deployment(dep: dict[str, Any]) -> str:
 
     schedule_kwargs: dict[str, Any] = {}
     if "interval_seconds" in dep:
-        schedule_kwargs["interval"] = timedelta(seconds=dep["interval_seconds"])
+        interval = timedelta(seconds=dep["interval_seconds"])
         if "anchor_time" in dep:
             hour, minute = (int(x) for x in dep["anchor_time"].split(":"))
-            schedule_kwargs["anchor_date"] = datetime(2024, 1, 1, hour, minute, tzinfo=timezone.utc)
+            anchor = datetime(2024, 1, 1, hour, minute, tzinfo=timezone.utc)
+            schedule_kwargs["schedule"] = IntervalSchedule(interval=interval, anchor_date=anchor)
+        else:
+            schedule_kwargs["interval"] = interval
     elif "cron" in dep:
         schedule_kwargs["cron"] = dep["cron"]
 
